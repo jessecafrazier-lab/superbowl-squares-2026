@@ -354,9 +354,13 @@
                 if (result && result.value) {
                     gameState = JSON.parse(result.value);
                     updateDisplay();
+                } else {
+                    // No data exists yet, use default state
+                    updateDisplay();
                 }
             } catch (error) {
-                console.log('No saved game state found, starting fresh');
+                // Key doesn't exist yet, that's okay - use default state
+                updateDisplay();
             }
         }
         
@@ -641,25 +645,27 @@
         document.getElementById('updateTeams').addEventListener('click', updateTeamNames);
         document.getElementById('resetGame').addEventListener('click', resetGame);
         
-        // Initialize
-        loadGameState();
-        
-        // Auto-refresh every 3 seconds to keep all players in sync
-        setInterval(async () => {
-            try {
-                const result = await window.storage.get('superbowl-squares-2026', true);
-                if (result && result.value) {
-                    const newState = JSON.parse(result.value);
-                    // Only update if state has changed
-                    if (JSON.stringify(newState) !== JSON.stringify(gameState)) {
-                        gameState = newState;
-                        updateDisplay();
+        // Initialize - ensure game state loads before starting auto-refresh
+        (async function initialize() {
+            await loadGameState();
+            
+            // Auto-refresh every 3 seconds to keep all players in sync
+            setInterval(async () => {
+                try {
+                    const result = await window.storage.get('superbowl-squares-2026', true);
+                    if (result && result.value) {
+                        const newState = JSON.parse(result.value);
+                        // Only update if state has changed
+                        if (JSON.stringify(newState) !== JSON.stringify(gameState)) {
+                            gameState = newState;
+                            updateDisplay();
+                        }
                     }
+                } catch (error) {
+                    // Silently ignore - game state might not exist yet
                 }
-            } catch (error) {
-                // Silently ignore - game state might not exist yet
-            }
-        }, 3000);
+            }, 3000);
+        })();
     </script>
 </body>
 </html>

@@ -37,8 +37,23 @@
         .subtitle {
             text-align: center;
             color: #666;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             font-size: 1.2em;
+        }
+        
+        .sync-status {
+            text-align: center;
+            color: #28a745;
+            font-weight: 600;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #d4edda;
+            border-radius: 8px;
+        }
+        
+        .sync-status.disconnected {
+            color: #dc3545;
+            background: #f8d7da;
         }
         
         .controls {
@@ -62,7 +77,7 @@
             font-size: 0.9em;
         }
         
-        input, button {
+        input, button, select {
             padding: 10px 15px;
             border: 2px solid #ddd;
             border-radius: 8px;
@@ -261,9 +276,7 @@
     <div class="container">
         <h1>🏈 Super Bowl 2026 Squares 🏈</h1>
         <div class="subtitle">$1 per square | Q1: $20 | Q2: $20 | Q3: $20 | Final: $40</div>
-        <div style="text-align: center; color: #28a745; font-weight: 600; margin-bottom: 20px;">
-            ✓ Shared Game - All players see the same board in real-time
-        </div>
+        <div class="sync-status" id="syncStatus">🔄 Connecting to Firebase...</div>
         
         <div class="controls">
             <div class="control-group">
@@ -291,6 +304,16 @@
             </div>
         </div>
         
+        <div class="grid-container">
+            <div class="grid-wrapper">
+                <div class="team-label-top" id="team1Label">Team 1</div>
+                <div class="grid-and-side">
+                    <div class="team-label-side" id="team2Label">Team 2</div>
+                    <div class="grid-with-numbers" id="grid"></div>
+                </div>
+            </div>
+        </div>
+        
         <div class="controls">
             <div class="control-group">
                 <label for="team1Score">Team 1 Score:</label>
@@ -313,16 +336,6 @@
             <button id="updateScore">Update Score & Check Winner</button>
         </div>
         
-        <div class="grid-container">
-            <div class="grid-wrapper">
-                <div class="team-label-top" id="team1Label">Team 1</div>
-                <div class="grid-and-side">
-                    <div class="team-label-side" id="team2Label">Team 2</div>
-                    <div class="grid-with-numbers" id="grid"></div>
-                </div>
-            </div>
-        </div>
-        
         <div class="stats">
             <div class="stat-box">
                 <h3>Player Statistics</h3>
@@ -335,7 +348,11 @@
         </div>
     </div>
     
-    <script>
+    <!-- Firebase SDK v9 - Modular -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js';
+        import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js';
+        
         const GRID_SIZE = 10;
         let gameState = {
             squares: [],
@@ -348,27 +365,55 @@
             playerStats: {}
         };
         
-        async function loadGameState() {
+        let database = null;
+        let gameRef = null;
+        
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA4-rKQRBzTGJTYGsXPcZfGF1oB4TTxG80",
+            authDomain: "superbowl-squares-a8765.firebaseapp.com",
+            databaseURL: "https://superbowl-squares-a8765-default-rtdb.firebaseio.com",
+            projectId: "superbowl-squares-a8765",
+            storageBucket: "superbowl-squares-a8765.firebasestorage.app",
+            messagingSenderId: "577853522438",
+            appId: "1:577853522438:web:a78db268c11f330af87987"
+        };
+        
+        function updateSyncStatus(message, connected) {
+            const status = document.getElementById('syncStatus');
+            status.textContent = message;
+            status.className = connected ? 'sync-status' : 'sync-status disconnected';
+        }
+        
+        function initializeFirebase() {
             try {
-                const result = await window.storage.get('superbowl-squares-2026', true);
-                if (result && result.value) {
-                    gameState = JSON.parse(result.value);
-                    updateDisplay();
-                } else {
-                    // No data exists yet, use default state
-                    updateDisplay();
-                }
-            } catch (error) {
-                // Key doesn't exist yet, that's okay - use default state
-                updateDisplay();
+                const app = initializeApp(firebaseConfig);
+                database = getDatabase(app);
+                gameRef = ref(database, 'superbowl-squares-2026');
+                
+                // Listen for changes
+                onValue(gameRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        gameState = data;
+                        updateDisplay();
+                    }
+                    updateSyncStatus('✅ Connected - Real-time sync active', true);
+                });
+                
+                updateSyncStatus('✅ Connected to Firebase - Real-time sync active!', true);
+            } catch (e) {
+                console.error('Firebase initialization error:', e);
+                updateSyncStatus('❌ Firebase connection error: ' + e.message, false);
             }
         }
         
         async function saveGameState() {
             try {
-                await window.storage.set('superbowl-squares-2026', JSON.stringify(gameState), true);
+                await set(gameRef, gameState);
             } catch (error) {
                 console.error('Error saving game state:', error);
+                updateSyncStatus('❌ Error saving data: ' + error.message, false);
             }
         }
         
@@ -447,9 +492,6 @@
             gameState.playerStats[playerName].squares++;
             
             saveGameState();
-            initializeGrid();
-            updatePlayerStats();
-            updateInfoMessage();
         }
         
         function updateAssignButton() {
@@ -471,8 +513,6 @@
             gameState.numbersAssigned = true;
             
             saveGameState();
-            initializeGrid();
-            updateInfoMessage('Numbers have been randomly assigned! The game is ready.');
         }
         
         function shuffleArray(array) {
@@ -520,8 +560,6 @@
                     
                     saveGameState();
                     highlightWinner(team1Index, team2Index);
-                    updateQuarterWinners();
-                    updatePlayerStats();
                     updateInfoMessage(`${quarter.toUpperCase()}: ${winner.player} wins $${winAmount}! (Score: ${team1Score}-${team2Score})`);
                 } else {
                     updateInfoMessage(`${quarter.toUpperCase()} winner already recorded: ${gameState.quarterWinners[quarter].player}`);
@@ -635,9 +673,15 @@
                     playerStats: {}
                 };
                 await saveGameState();
-                updateDisplay();
             }
         }
+        
+        // Make functions globally accessible
+        window.claimSquare = claimSquare;
+        window.assignRandomNumbers = assignRandomNumbers;
+        window.updateScore = updateScore;
+        window.updateTeamNames = updateTeamNames;
+        window.resetGame = resetGame;
         
         // Event listeners
         document.getElementById('assignNumbers').addEventListener('click', assignRandomNumbers);
@@ -645,27 +689,9 @@
         document.getElementById('updateTeams').addEventListener('click', updateTeamNames);
         document.getElementById('resetGame').addEventListener('click', resetGame);
         
-        // Initialize - ensure game state loads before starting auto-refresh
-        (async function initialize() {
-            await loadGameState();
-            
-            // Auto-refresh every 3 seconds to keep all players in sync
-            setInterval(async () => {
-                try {
-                    const result = await window.storage.get('superbowl-squares-2026', true);
-                    if (result && result.value) {
-                        const newState = JSON.parse(result.value);
-                        // Only update if state has changed
-                        if (JSON.stringify(newState) !== JSON.stringify(gameState)) {
-                            gameState = newState;
-                            updateDisplay();
-                        }
-                    }
-                } catch (error) {
-                    // Silently ignore - game state might not exist yet
-                }
-            }, 3000);
-        })();
+        // Initialize Firebase and display
+        initializeFirebase();
+        updateDisplay();
     </script>
 </body>
 </html>

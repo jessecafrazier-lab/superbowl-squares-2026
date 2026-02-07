@@ -106,6 +106,12 @@
             display: inline-block;
         }
         
+        .grid-and-side {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
         .team-label-top {
             text-align: center;
             font-weight: bold;
@@ -255,6 +261,9 @@
     <div class="container">
         <h1>🏈 Super Bowl 2026 Squares 🏈</h1>
         <div class="subtitle">$1 per square | Q1: $20 | Q2: $20 | Q3: $20 | Final: $40</div>
+        <div style="text-align: center; color: #28a745; font-weight: 600; margin-bottom: 20px;">
+            ✓ Shared Game - All players see the same board in real-time
+        </div>
         
         <div class="controls">
             <div class="control-group">
@@ -307,8 +316,10 @@
         <div class="grid-container">
             <div class="grid-wrapper">
                 <div class="team-label-top" id="team1Label">Team 1</div>
-                <div class="grid-with-numbers" id="grid"></div>
-                <div class="team-label-side" id="team2Label">Team 2</div>
+                <div class="grid-and-side">
+                    <div class="team-label-side" id="team2Label">Team 2</div>
+                    <div class="grid-with-numbers" id="grid"></div>
+                </div>
             </div>
         </div>
         
@@ -339,7 +350,7 @@
         
         async function loadGameState() {
             try {
-                const result = await window.storage.get('superbowl-squares-2026');
+                const result = await window.storage.get('superbowl-squares-2026', true);
                 if (result && result.value) {
                     gameState = JSON.parse(result.value);
                     updateDisplay();
@@ -351,7 +362,7 @@
         
         async function saveGameState() {
             try {
-                await window.storage.set('superbowl-squares-2026', JSON.stringify(gameState));
+                await window.storage.set('superbowl-squares-2026', JSON.stringify(gameState), true);
             } catch (error) {
                 console.error('Error saving game state:', error);
             }
@@ -632,6 +643,23 @@
         
         // Initialize
         loadGameState();
+        
+        // Auto-refresh every 3 seconds to keep all players in sync
+        setInterval(async () => {
+            try {
+                const result = await window.storage.get('superbowl-squares-2026', true);
+                if (result && result.value) {
+                    const newState = JSON.parse(result.value);
+                    // Only update if state has changed
+                    if (JSON.stringify(newState) !== JSON.stringify(gameState)) {
+                        gameState = newState;
+                        updateDisplay();
+                    }
+                }
+            } catch (error) {
+                // Silently ignore - game state might not exist yet
+            }
+        }, 3000);
     </script>
 </body>
 </html>

@@ -115,16 +115,37 @@
             justify-content: center;
             margin: 30px 0;
             overflow-x: auto;
+            width: 100%;
         }
         
         .grid-wrapper {
             display: inline-block;
+            min-width: min-content;
         }
         
         .grid-and-side {
             display: flex;
             gap: 10px;
-            align-items: center;
+            align-items: flex-start;
+        }
+        
+        @media (max-width: 768px) {
+            .grid-container {
+                overflow-x: scroll;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .container {
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+            
+            .subtitle {
+                font-size: 1em;
+            }
         }
         
         .team-label-top {
@@ -292,6 +313,7 @@
         
         <div class="controls">
             <button id="assignNumbers">Assign Random Numbers</button>
+            <button id="testConnection" style="background: #17a2b8;">Test Firebase Connection</button>
             <button id="resetGame" class="reset-btn">Reset Game</button>
         </div>
         
@@ -302,7 +324,15 @@
                 <label for="playerName">Your Name:</label>
                 <input type="text" id="playerName" placeholder="Enter your name">
             </div>
+            <div class="control-group">
+                <label for="squareCount">Number of Squares ($1 each):</label>
+                <input type="number" id="squareCount" min="1" max="100" value="1" placeholder="How many?">
+            </div>
+            <button id="submitBid">Submit My Bid</button>
+            <button id="clearMySquares" style="background: #ffc107; color: #333;">Clear My Squares</button>
         </div>
+        
+        <div id="bidMessage" class="info-message" style="background: #fff3cd; color: #856404; display: none;"></div>
         
         <div class="grid-container">
             <div class="grid-wrapper">
@@ -338,6 +368,10 @@
         
         <div class="stats">
             <div class="stat-box">
+                <h3>Player Bids</h3>
+                <div id="playerBids"></div>
+            </div>
+            <div class="stat-box">
                 <h3>Player Statistics</h3>
                 <div id="playerStats"></div>
             </div>
@@ -354,6 +388,8 @@
         import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js';
         
         const GRID_SIZE = 10;
+        const KICKOFF_DATE = new Date('2026-02-09T18:30:00-05:00'); // Super Bowl LIX kickoff - adjust timezone as needed
+        
         let gameState = {
             squares: [],
             team1Numbers: [],
@@ -362,7 +398,8 @@
             team1Name: 'Team 1',
             team2Name: 'Team 2',
             quarterWinners: {},
-            playerStats: {}
+            playerStats: {},
+            playerBids: {} // Track how many squares each player wants
         };
         
         let database = null;
@@ -387,24 +424,53 @@
         
         function initializeFirebase() {
             try {
+                console.log('Initializing Firebase...');
                 const app = initializeApp(firebaseConfig);
+                console.log('Firebase app initialized:', app.name);
+                
                 database = getDatabase(app);
+                console.log('Database instance created');
+                
                 gameRef = ref(database, 'superbowl-squares-2026');
+                console.log('Game reference created');
                 
                 // Listen for changes
                 onValue(gameRef, (snapshot) => {
+                    console.log('Firebase data received');
                     const data = snapshot.val();
+                    console.log('Data from Firebase:', data);
+                    
                     if (data) {
                         gameState = data;
+                        console.log('Game state updated from Firebase');
                         updateDisplay();
+                    } else {
+                        console.log('No data in Firebase yet - using default state');
                     }
                     updateSyncStatus('✅ Connected - Real-time sync active', true);
+                }, (error) => {
+                    console.error('Firebase onValue error:', error);
+                    updateSyncStatus('❌ Error loading data: ' + error.message, false);
                 });
                 
                 updateSyncStatus('✅ Connected to Firebase - Real-time sync active!', true);
+                console.log('Firebase initialization complete');
             } catch (e) {
                 console.error('Firebase initialization error:', e);
                 updateSyncStatus('❌ Firebase connection error: ' + e.message, false);
+            }
+        }
+        
+        async function testConnection() {
+            try {
+                console.log('Testing Firebase connection...');
+                const testData = { test: 'connection', timestamp: Date.now() };
+                await set(ref(database, 'connection-test'), testData);
+                alert('✅ Firebase connection successful! Data was written and should be visible in Firebase Console.');
+                console.log('Test successful - data written to Firebase');
+            } catch (error) {
+                console.error('Connection test failed:', error);
+                alert('❌ Firebase connection failed: ' + error.message);
             }
         }
         
@@ -471,15 +537,52 @@
                 return;
             }
             
-            const playerName = document.getElementById('playerName').value.trim();
-            if (!playerName) {
-                alert('Please enter your name first!');
+            const index = row * GRID_SIZE + col;
+            const squareData = gameState.squares[index];
+            
+            // If square is already claimed, show info or allow unclaim
+            if (squareData && squareData.player) {
+                const playerName = document.getElementById('playerName').value.trim();
+                
+                // If it's their own square, ask if they want to unclaim it
+                if (playerName && squareData.player === playerName) {
+                    if (confirm(`Unclaim this square? You currently have ${squareData.player}'s square at position [${row},${col}]`)) {
+                        gameState.squares[index] = null;
+                        
+                        // Update player stats
+                        if (gameState.playerStats[playerName]) {
+                            gameState.playerStats[playerName].squares--;
+                            if (gameState.playerStats[playerName].squares === 0) {
+                                delete gameState.playerStats[playerName];
+                            }
+                        }
+                        
+                        saveGameState();
+                    }
+                } else {
+                    alert(`This square is claimed by ${squareData.player}`);
+                }
                 return;
             }
             
-            const index = row * GRID_SIZE + col;
-            if (gameState.squares[index] && gameState.squares[index].player) {
-                alert('This square is already claimed!');
+            // Claim the square
+            const playerName = document.getElementById('playerName').value.trim();
+            if (!playerName) {
+                alert('Please enter your name and submit your bid first!');
+                return;
+            }
+            
+            // Check if they've submitted a bid
+            const bidCount = gameState.playerBids[playerName] || 0;
+            const currentSquares = gameState.playerStats[playerName]?.squares || 0;
+            
+            if (bidCount === 0) {
+                alert('Please submit your bid first (enter number of squares and click "Submit My Bid")');
+                return;
+            }
+            
+            if (currentSquares >= bidCount) {
+                alert(`You've already claimed ${currentSquares} squares. Your bid was for ${bidCount} squares.`);
                 return;
             }
             
@@ -492,6 +595,9 @@
             gameState.playerStats[playerName].squares++;
             
             saveGameState();
+            
+            // Show progress
+            updateBidMessage(playerName);
         }
         
         function updateAssignButton() {
@@ -579,6 +685,121 @@
             }
         }
         
+        function submitBid() {
+            const playerName = document.getElementById('playerName').value.trim();
+            const squareCount = parseInt(document.getElementById('squareCount').value);
+            
+            if (!playerName) {
+                alert('Please enter your name!');
+                return;
+            }
+            
+            if (!squareCount || squareCount < 1 || squareCount > 100) {
+                alert('Please enter a valid number of squares (1-100)!');
+                return;
+            }
+            
+            if (!gameState.playerBids) {
+                gameState.playerBids = {};
+            }
+            
+            gameState.playerBids[playerName] = squareCount;
+            saveGameState();
+            
+            updateBidMessage(playerName);
+            updatePlayerBids();
+        }
+        
+        function updateBidMessage(playerName) {
+            const bidMsg = document.getElementById('bidMessage');
+            const bidCount = gameState.playerBids[playerName] || 0;
+            const currentSquares = gameState.playerStats[playerName]?.squares || 0;
+            
+            if (bidCount > 0) {
+                bidMsg.style.display = 'block';
+                bidMsg.textContent = `${playerName}: ${currentSquares}/${bidCount} squares claimed. ${bidCount - currentSquares} remaining. Total bid: $${bidCount}`;
+                
+                if (currentSquares >= bidCount) {
+                    bidMsg.style.background = '#d4edda';
+                    bidMsg.style.color = '#155724';
+                    bidMsg.textContent = `${playerName}: All ${bidCount} squares claimed! Total: $${bidCount}`;
+                }
+            }
+        }
+        
+        function clearMySquares() {
+            const playerName = document.getElementById('playerName').value.trim();
+            
+            if (!playerName) {
+                alert('Please enter your name first!');
+                return;
+            }
+            
+            const mySquares = gameState.squares.filter(s => s && s.player === playerName).length;
+            
+            if (mySquares === 0) {
+                alert('You have no squares to clear!');
+                return;
+            }
+            
+            if (!confirm(`Clear all ${mySquares} of your squares? This cannot be undone!`)) {
+                return;
+            }
+            
+            // Remove all squares belonging to this player
+            for (let i = 0; i < gameState.squares.length; i++) {
+                if (gameState.squares[i] && gameState.squares[i].player === playerName) {
+                    gameState.squares[i] = null;
+                }
+            }
+            
+            // Update stats
+            if (gameState.playerStats[playerName]) {
+                gameState.playerStats[playerName].squares = 0;
+            }
+            
+            saveGameState();
+            updateBidMessage(playerName);
+        }
+        
+        function updatePlayerBids() {
+            if (!gameState.playerBids) {
+                gameState.playerBids = {};
+            }
+            
+            const bidsDiv = document.getElementById('playerBids');
+            const entries = Object.entries(gameState.playerBids);
+            
+            if (entries.length === 0) {
+                bidsDiv.innerHTML = '<p style="color: #999;">No bids yet</p>';
+                return;
+            }
+            
+            bidsDiv.innerHTML = entries.map(([player, count]) => {
+                const claimed = gameState.playerStats[player]?.squares || 0;
+                const total = count;
+                const percentage = Math.round((claimed / total) * 100);
+                
+                return `
+                    <div class="player-stat">
+                        <strong>${player}</strong>
+                        <span>${claimed}/${total} squares ($${total}) - ${percentage}% complete</span>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function checkKickoffAndHideReset() {
+            const now = new Date();
+            const resetBtn = document.getElementById('resetGame');
+            
+            if (now >= KICKOFF_DATE) {
+                resetBtn.style.display = 'none';
+            } else {
+                resetBtn.style.display = 'inline-block';
+            }
+        }
+        
         function updatePlayerStats() {
             const statsDiv = document.getElementById('playerStats');
             const sorted = Object.entries(gameState.playerStats).sort((a, b) => b[1].winnings - a[1].winnings);
@@ -656,8 +877,16 @@
             document.getElementById('team2Name').value = gameState.team2Name;
             initializeGrid();
             updatePlayerStats();
+            updatePlayerBids();
             updateQuarterWinners();
             updateInfoMessage();
+            checkKickoffAndHideReset();
+            
+            // Update bid message if player name is entered
+            const playerName = document.getElementById('playerName').value.trim();
+            if (playerName) {
+                updateBidMessage(playerName);
+            }
         }
         
         async function resetGame() {
@@ -670,7 +899,8 @@
                     team1Name: 'Team 1',
                     team2Name: 'Team 2',
                     quarterWinners: {},
-                    playerStats: {}
+                    playerStats: {},
+                    playerBids: {}
                 };
                 await saveGameState();
             }
@@ -682,12 +912,26 @@
         window.updateScore = updateScore;
         window.updateTeamNames = updateTeamNames;
         window.resetGame = resetGame;
+        window.testConnection = testConnection;
+        window.submitBid = submitBid;
+        window.clearMySquares = clearMySquares;
         
         // Event listeners
         document.getElementById('assignNumbers').addEventListener('click', assignRandomNumbers);
         document.getElementById('updateScore').addEventListener('click', updateScore);
         document.getElementById('updateTeams').addEventListener('click', updateTeamNames);
         document.getElementById('resetGame').addEventListener('click', resetGame);
+        document.getElementById('testConnection').addEventListener('click', testConnection);
+        document.getElementById('submitBid').addEventListener('click', submitBid);
+        document.getElementById('clearMySquares').addEventListener('click', clearMySquares);
+        
+        // Update bid message when player changes their name
+        document.getElementById('playerName').addEventListener('input', function() {
+            const playerName = this.value.trim();
+            if (playerName) {
+                updateBidMessage(playerName);
+            }
+        });
         
         // Initialize Firebase and display
         initializeFirebase();

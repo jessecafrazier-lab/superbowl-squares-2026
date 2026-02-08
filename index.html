@@ -491,7 +491,16 @@
         
         function initializeGrid() {
             const grid = document.getElementById('grid');
+            if (!grid) {
+                console.error('Grid element not found!');
+                return;
+            }
+            
             grid.innerHTML = '';
+            console.log('Initializing grid with GRID_SIZE:', GRID_SIZE);
+            console.log('Numbers assigned:', gameState.numbersAssigned);
+            console.log('Team1 numbers:', gameState.team1Numbers);
+            console.log('Team2 numbers:', gameState.team2Numbers);
             
             // Corner cell
             const corner = document.createElement('div');
@@ -502,7 +511,7 @@
             for (let i = 0; i < GRID_SIZE; i++) {
                 const numCell = document.createElement('div');
                 numCell.className = 'number-cell';
-                numCell.textContent = gameState.numbersAssigned ? gameState.team1Numbers[i] : '?';
+                numCell.textContent = (gameState.numbersAssigned && gameState.team1Numbers && gameState.team1Numbers[i] !== undefined) ? gameState.team1Numbers[i] : '?';
                 grid.appendChild(numCell);
             }
             
@@ -511,7 +520,7 @@
                 // Side number
                 const sideNum = document.createElement('div');
                 sideNum.className = 'number-cell';
-                sideNum.textContent = gameState.numbersAssigned ? gameState.team2Numbers[row] : '?';
+                sideNum.textContent = (gameState.numbersAssigned && gameState.team2Numbers && gameState.team2Numbers[row] !== undefined) ? gameState.team2Numbers[row] : '?';
                 grid.appendChild(sideNum);
                 
                 // Squares
@@ -522,7 +531,7 @@
                     square.dataset.col = col;
                     
                     const index = row * GRID_SIZE + col;
-                    const squareData = gameState.squares[index];
+                    const squareData = gameState.squares && gameState.squares[index];
                     
                     if (squareData && squareData.player) {
                         square.classList.add('claimed');
@@ -534,6 +543,7 @@
                 }
             }
             
+            console.log('Grid initialized with', grid.children.length, 'total cells (should be 121)');
             updateAssignButton();
         }
         

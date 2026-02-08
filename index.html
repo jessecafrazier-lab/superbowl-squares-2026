@@ -214,6 +214,18 @@
             cursor: default;
         }
         
+        .square.temp-selected {
+            background: #fff9c4;
+            border: 2px solid #ffc107;
+            cursor: pointer;
+        }
+        
+        .square.locked {
+            background: #a5d6a7;
+            cursor: not-allowed;
+            font-weight: bold;
+        }
+        
         .square.winner {
             background: #ffd700;
             animation: pulse 1s infinite;
@@ -327,18 +339,14 @@
         
         <div class="controls">
             <div class="control-group">
-                <label for="playerName">Your Name:</label>
-                <input type="text" id="playerName" placeholder="Enter your name">
+                <label for="playerInitials">Your Initials:</label>
+                <input type="text" id="playerInitials" placeholder="e.g., JD" maxlength="3">
             </div>
-            <div class="control-group">
-                <label for="squareCount">Number of Squares ($1 each):</label>
-                <input type="number" id="squareCount" min="1" max="100" value="1" placeholder="How many?">
-            </div>
-            <button id="submitBid">Submit My Bid</button>
-            <button id="clearMySquares" style="background: #ffc107; color: #333;">Clear My Squares</button>
+            <button id="lockSquares" style="background: #28a745;">Lock In My Squares</button>
+            <button id="clearMySquares" style="background: #ffc107; color: #333;">Clear My Selection</button>
         </div>
         
-        <div id="bidMessage" class="info-message" style="background: #fff3cd; color: #856404; display: none;"></div>
+        <div id="selectionMessage" class="info-message" style="background: #fff3cd; color: #856404; display: none;"></div>
         
         <div class="grid-container">
             <div class="grid-wrapper">
@@ -374,10 +382,6 @@
         
         <div class="stats">
             <div class="stat-box">
-                <h3>Player Bids</h3>
-                <div id="playerBids"></div>
-            </div>
-            <div class="stat-box">
                 <h3>Player Statistics</h3>
                 <div id="playerStats"></div>
             </div>
@@ -407,6 +411,9 @@
             playerStats: {},
             playerBids: {} // Track how many squares each player wants
         };
+        
+        // Temporary selection tracker (not saved to Firebase until locked)
+        let myTempSelection = [];
         
         let database = null;
         let gameRef = null;
@@ -499,8 +506,6 @@
             grid.innerHTML = '';
             console.log('Initializing grid with GRID_SIZE:', GRID_SIZE);
             console.log('Numbers assigned:', gameState.numbersAssigned);
-            console.log('Team1 numbers:', gameState.team1Numbers);
-            console.log('Team2 numbers:', gameState.team2Numbers);
             
             // Corner cell
             const corner = document.createElement('div');
@@ -533,87 +538,142 @@
                     const index = row * GRID_SIZE + col;
                     const squareData = gameState.squares && gameState.squares[index];
                     
-                    if (squareData && squareData.player) {
-                        square.classList.add('claimed');
-                        square.textContent = squareData.player;
+                    // Check if this square is locked (saved to Firebase)
+                    if (squareData && squareData.initials && squareData.locked) {
+                        square.classList.add('locked');
+                        square.textContent = squareData.initials;
+                    }
+                    // Check if this square is in temporary selection
+                    else if (myTempSelection.includes(index)) {
+                        square.classList.add('temp-selected');
+                        square.textContent = '✓';
                     }
                     
-                    square.addEventListener('click', () => claimSquare(row, col));
+                    square.addEventListener('click', () => toggleSquareSelection(row, col));
                     grid.appendChild(square);
                 }
             }
             
             console.log('Grid initialized with', grid.children.length, 'total cells (should be 121)');
             updateAssignButton();
+            updateSelectionMessage();
         }
         
-        function claimSquare(row, col) {
+        function toggleSquareSelection(row, col) {
             if (!gameState.numbersAssigned) {
-                alert('Please assign random numbers first before claiming squares!');
+                alert('Please assign random numbers first before selecting squares!');
                 return;
             }
             
             const index = row * GRID_SIZE + col;
-            const squareData = gameState.squares[index];
+            const squareData = gameState.squares && gameState.squares[index];
             
-            // If square is already claimed, show info or allow unclaim
-            if (squareData && squareData.player) {
-                const playerName = document.getElementById('playerName').value.trim();
-                
-                // If it's their own square, ask if they want to unclaim it
-                if (playerName && squareData.player === playerName) {
-                    if (confirm(`Unclaim this square? You currently have ${squareData.player}'s square at position [${row},${col}]`)) {
-                        gameState.squares[index] = null;
-                        
-                        // Update player stats
-                        if (gameState.playerStats[playerName]) {
-                            gameState.playerStats[playerName].squares--;
-                            if (gameState.playerStats[playerName].squares === 0) {
-                                delete gameState.playerStats[playerName];
-                            }
-                        }
-                        
-                        saveGameState();
-                    }
-                } else {
-                    alert(`This square is claimed by ${squareData.player}`);
+            // If square is already locked by someone, can't select it
+            if (squareData && squareData.locked) {
+                alert(`This square is locked by ${squareData.initials}`);
+                return;
+            }
+            
+            // Toggle selection
+            const selectionIndex = myTempSelection.indexOf(index);
+            if (selectionIndex > -1) {
+                // Deselect
+                myTempSelection.splice(selectionIndex, 1);
+            } else {
+                // Select
+                myTempSelection.push(index);
+            }
+            
+            initializeGrid(); // Refresh to show selection
+        }
+        
+        function lockInSquares() {
+            const initials = document.getElementById('playerInitials').value.trim().toUpperCase();
+            
+            if (!initials) {
+                alert('Please enter your initials first!');
+                return;
+            }
+            
+            if (initials.length < 2 || initials.length > 3) {
+                alert('Please enter 2-3 initials (e.g., JD or JDM)');
+                return;
+            }
+            
+            if (myTempSelection.length === 0) {
+                alert('Please select at least one square first!');
+                return;
+            }
+            
+            const cost = myTempSelection.length;
+            if (!confirm(`Lock in ${myTempSelection.length} square(s) for $${cost}? This cannot be undone!`)) {
+                return;
+            }
+            
+            // Lock all selected squares
+            for (const index of myTempSelection) {
+                if (!gameState.squares) {
+                    gameState.squares = [];
                 }
-                return;
+                gameState.squares[index] = {
+                    initials: initials,
+                    locked: true,
+                    row: Math.floor(index / GRID_SIZE),
+                    col: index % GRID_SIZE
+                };
             }
-            
-            // Claim the square
-            const playerName = document.getElementById('playerName').value.trim();
-            if (!playerName) {
-                alert('Please enter your name and submit your bid first!');
-                return;
-            }
-            
-            // Check if they've submitted a bid
-            const bidCount = gameState.playerBids[playerName] || 0;
-            const currentSquares = gameState.playerStats[playerName]?.squares || 0;
-            
-            if (bidCount === 0) {
-                alert('Please submit your bid first (enter number of squares and click "Submit My Bid")');
-                return;
-            }
-            
-            if (currentSquares >= bidCount) {
-                alert(`You've already claimed ${currentSquares} squares. Your bid was for ${bidCount} squares.`);
-                return;
-            }
-            
-            gameState.squares[index] = { player: playerName, row, col };
             
             // Update player stats
-            if (!gameState.playerStats[playerName]) {
-                gameState.playerStats[playerName] = { squares: 0, winnings: 0 };
+            if (!gameState.playerStats) {
+                gameState.playerStats = {};
             }
-            gameState.playerStats[playerName].squares++;
+            if (!gameState.playerStats[initials]) {
+                gameState.playerStats[initials] = { squares: 0, winnings: 0 };
+            }
+            gameState.playerStats[initials].squares += myTempSelection.length;
             
+            // Save to Firebase
             saveGameState();
             
-            // Show progress
-            updateBidMessage(playerName);
+            // Clear temp selection
+            myTempSelection = [];
+            
+            updateSelectionMessage('✅ Locked in ' + cost + ' square(s) for $' + cost + '!');
+        }
+        
+        function clearMySelection() {
+            if (myTempSelection.length === 0) {
+                alert('You have no squares selected!');
+                return;
+            }
+            
+            myTempSelection = [];
+            initializeGrid();
+            updateSelectionMessage();
+        }
+        
+        function updateSelectionMessage(customMsg) {
+            const msgDiv = document.getElementById('selectionMessage');
+            
+            if (customMsg) {
+                msgDiv.style.display = 'block';
+                msgDiv.style.background = '#d4edda';
+                msgDiv.style.color = '#155724';
+                msgDiv.textContent = customMsg;
+                setTimeout(() => {
+                    msgDiv.style.display = 'none';
+                }, 5000);
+                return;
+            }
+            
+            if (myTempSelection.length > 0) {
+                msgDiv.style.display = 'block';
+                msgDiv.style.background = '#fff3cd';
+                msgDiv.style.color = '#856404';
+                msgDiv.textContent = `${myTempSelection.length} square(s) selected = $${myTempSelection.length}. Click "Lock In My Squares" to confirm.`;
+            } else {
+                msgDiv.style.display = 'none';
+            }
         }
         
         function updateAssignButton() {
@@ -667,27 +727,36 @@
             // Prize amounts: Q1-Q3 = $20, Final = $40
             const winAmount = quarter === 'final' ? 40 : 20;
             
-            if (winner && winner.player) {
+            if (winner && winner.initials && winner.locked) {
+                if (!gameState.quarterWinners) {
+                    gameState.quarterWinners = {};
+                }
+                
                 if (!gameState.quarterWinners[quarter]) {
                     gameState.quarterWinners[quarter] = {
-                        player: winner.player,
+                        initials: winner.initials,
                         score: `${team1Score}-${team2Score}`,
                         amount: winAmount
                     };
                     
-                    if (!gameState.playerStats[winner.player]) {
-                        gameState.playerStats[winner.player] = { squares: 0, winnings: 0 };
+                    if (!gameState.playerStats) {
+                        gameState.playerStats = {};
                     }
-                    gameState.playerStats[winner.player].winnings += winAmount;
+                    if (!gameState.playerStats[winner.initials]) {
+                        gameState.playerStats[winner.initials] = { squares: 0, winnings: 0 };
+                    }
+                    gameState.playerStats[winner.initials].winnings += winAmount;
                     
                     saveGameState();
                     highlightWinner(team1Index, team2Index);
-                    updateInfoMessage(`${quarter.toUpperCase()}: ${winner.player} wins $${winAmount}! (Score: ${team1Score}-${team2Score})`);
+                    updateQuarterWinners();
+                    updatePlayerStats();
+                    updateInfoMessage(`${quarter.toUpperCase()}: ${winner.initials} wins $${winAmount}! (Score: ${team1Score}-${team2Score})`);
                 } else {
-                    updateInfoMessage(`${quarter.toUpperCase()} winner already recorded: ${gameState.quarterWinners[quarter].player}`);
+                    updateInfoMessage(`${quarter.toUpperCase()} winner already recorded: ${gameState.quarterWinners[quarter].initials}`);
                 }
             } else {
-                updateInfoMessage('No player has claimed the winning square!');
+                updateInfoMessage('No player has locked in the winning square!');
             }
         }
         
@@ -701,108 +770,21 @@
             }
         }
         
-        function submitBid() {
-            const playerName = document.getElementById('playerName').value.trim();
-            const squareCount = parseInt(document.getElementById('squareCount').value);
+        function updatePlayerStats() {
+            const statsDiv = document.getElementById('playerStats');
+            const sorted = Object.entries(gameState.playerStats || {}).sort((a, b) => b[1].winnings - a[1].winnings);
             
-            if (!playerName) {
-                alert('Please enter your name!');
+            if (sorted.length === 0) {
+                statsDiv.innerHTML = '<p style="color: #999;">No players yet</p>';
                 return;
             }
             
-            if (!squareCount || squareCount < 1 || squareCount > 100) {
-                alert('Please enter a valid number of squares (1-100)!');
-                return;
-            }
-            
-            if (!gameState.playerBids) {
-                gameState.playerBids = {};
-            }
-            
-            gameState.playerBids[playerName] = squareCount;
-            saveGameState();
-            
-            updateBidMessage(playerName);
-            updatePlayerBids();
-        }
-        
-        function updateBidMessage(playerName) {
-            const bidMsg = document.getElementById('bidMessage');
-            const bidCount = gameState.playerBids[playerName] || 0;
-            const currentSquares = gameState.playerStats[playerName]?.squares || 0;
-            
-            if (bidCount > 0) {
-                bidMsg.style.display = 'block';
-                bidMsg.textContent = `${playerName}: ${currentSquares}/${bidCount} squares claimed. ${bidCount - currentSquares} remaining. Total bid: $${bidCount}`;
-                
-                if (currentSquares >= bidCount) {
-                    bidMsg.style.background = '#d4edda';
-                    bidMsg.style.color = '#155724';
-                    bidMsg.textContent = `${playerName}: All ${bidCount} squares claimed! Total: $${bidCount}`;
-                }
-            }
-        }
-        
-        function clearMySquares() {
-            const playerName = document.getElementById('playerName').value.trim();
-            
-            if (!playerName) {
-                alert('Please enter your name first!');
-                return;
-            }
-            
-            const mySquares = gameState.squares.filter(s => s && s.player === playerName).length;
-            
-            if (mySquares === 0) {
-                alert('You have no squares to clear!');
-                return;
-            }
-            
-            if (!confirm(`Clear all ${mySquares} of your squares? This cannot be undone!`)) {
-                return;
-            }
-            
-            // Remove all squares belonging to this player
-            for (let i = 0; i < gameState.squares.length; i++) {
-                if (gameState.squares[i] && gameState.squares[i].player === playerName) {
-                    gameState.squares[i] = null;
-                }
-            }
-            
-            // Update stats
-            if (gameState.playerStats[playerName]) {
-                gameState.playerStats[playerName].squares = 0;
-            }
-            
-            saveGameState();
-            updateBidMessage(playerName);
-        }
-        
-        function updatePlayerBids() {
-            if (!gameState.playerBids) {
-                gameState.playerBids = {};
-            }
-            
-            const bidsDiv = document.getElementById('playerBids');
-            const entries = Object.entries(gameState.playerBids);
-            
-            if (entries.length === 0) {
-                bidsDiv.innerHTML = '<p style="color: #999;">No bids yet</p>';
-                return;
-            }
-            
-            bidsDiv.innerHTML = entries.map(([player, count]) => {
-                const claimed = gameState.playerStats[player]?.squares || 0;
-                const total = count;
-                const percentage = Math.round((claimed / total) * 100);
-                
-                return `
-                    <div class="player-stat">
-                        <strong>${player}</strong>
-                        <span>${claimed}/${total} squares ($${total}) - ${percentage}% complete</span>
-                    </div>
-                `;
-            }).join('');
+            statsDiv.innerHTML = sorted.map(([initials, stats]) => `
+                <div class="player-stat">
+                    <strong>${initials}</strong>
+                    <span>${stats.squares} squares ($${stats.squares}) | $${stats.winnings} won</span>
+                </div>
+            `).join('');
         }
         
         function checkKickoffAndHideReset() {
@@ -816,28 +798,11 @@
             }
         }
         
-        function updatePlayerStats() {
-            const statsDiv = document.getElementById('playerStats');
-            const sorted = Object.entries(gameState.playerStats).sort((a, b) => b[1].winnings - a[1].winnings);
-            
-            if (sorted.length === 0) {
-                statsDiv.innerHTML = '<p style="color: #999;">No players yet</p>';
-                return;
-            }
-            
-            statsDiv.innerHTML = sorted.map(([player, stats]) => `
-                <div class="player-stat">
-                    <strong>${player}</strong>
-                    <span>${stats.squares} squares | $${stats.winnings} won</span>
-                </div>
-            `).join('');
-        }
-        
         function updateQuarterWinners() {
             const winnersDiv = document.getElementById('quarterWinners');
             const quarters = ['1', '2', '3', '4', 'final'];
             
-            const hasWinners = Object.keys(gameState.quarterWinners).length > 0;
+            const hasWinners = gameState.quarterWinners && Object.keys(gameState.quarterWinners).length > 0;
             
             if (!hasWinners) {
                 winnersDiv.innerHTML = '<p style="color: #999;">No winners yet</p>';
@@ -847,9 +812,10 @@
             winnersDiv.innerHTML = quarters.map(q => {
                 const winner = gameState.quarterWinners[q];
                 if (!winner) return '';
+                const displayInitials = winner.initials || winner.player; // Backward compatibility
                 return `
                     <div class="quarter-winner">
-                        <strong>${q === 'final' ? 'Final' : 'Q' + q}:</strong> ${winner.player} - $${winner.amount} (${winner.score})
+                        <strong>${q === 'final' ? 'Final' : 'Q' + q}:</strong> ${displayInitials} - $${winner.amount} (${winner.score})
                     </div>
                 `;
             }).join('');
@@ -893,16 +859,9 @@
             document.getElementById('team2Name').value = gameState.team2Name;
             initializeGrid();
             updatePlayerStats();
-            updatePlayerBids();
             updateQuarterWinners();
             updateInfoMessage();
             checkKickoffAndHideReset();
-            
-            // Update bid message if player name is entered
-            const playerName = document.getElementById('playerName').value.trim();
-            if (playerName) {
-                updateBidMessage(playerName);
-            }
         }
         
         async function resetGame() {
@@ -923,14 +882,14 @@
         }
         
         // Make functions globally accessible
-        window.claimSquare = claimSquare;
+        window.toggleSquareSelection = toggleSquareSelection;
         window.assignRandomNumbers = assignRandomNumbers;
         window.updateScore = updateScore;
         window.updateTeamNames = updateTeamNames;
         window.resetGame = resetGame;
         window.testConnection = testConnection;
-        window.submitBid = submitBid;
-        window.clearMySquares = clearMySquares;
+        window.lockInSquares = lockInSquares;
+        window.clearMySelection = clearMySelection;
         
         // Event listeners
         document.getElementById('assignNumbers').addEventListener('click', assignRandomNumbers);
@@ -938,16 +897,8 @@
         document.getElementById('updateTeams').addEventListener('click', updateTeamNames);
         document.getElementById('resetGame').addEventListener('click', resetGame);
         document.getElementById('testConnection').addEventListener('click', testConnection);
-        document.getElementById('submitBid').addEventListener('click', submitBid);
-        document.getElementById('clearMySquares').addEventListener('click', clearMySquares);
-        
-        // Update bid message when player changes their name
-        document.getElementById('playerName').addEventListener('input', function() {
-            const playerName = this.value.trim();
-            if (playerName) {
-                updateBidMessage(playerName);
-            }
-        });
+        document.getElementById('lockSquares').addEventListener('click', lockInSquares);
+        document.getElementById('clearMySquares').addEventListener('click', clearMySelection);
         
         // Initialize Firebase and display
         initializeFirebase();
